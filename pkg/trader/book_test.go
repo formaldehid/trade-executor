@@ -16,7 +16,6 @@ func TestBook(t *testing.T) {
 }
 
 func (s *bookTestSuite) TestFillOrder() {
-
 	order := &Order{
 		Id:     uuid.NewString(),
 		Type:   "SELL",
