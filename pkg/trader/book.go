@@ -5,6 +5,7 @@ import (
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"strconv"
+	"time"
 )
 
 type book struct {
@@ -19,7 +20,7 @@ type book struct {
 type Book interface {
 	GetStream() *Stream
 	CreateSellOrder(symbol string, size float64, price float64) (Order, error)
-	FillOrder(order *Order, ticker *Ticker, fills []*OrderFill) bool
+	FillOrder(order *Order, ticker *Ticker, fills []*OrderFill) (bool, *OrderFill)
 }
 
 func NewBook(cfg *Config) (Book, error) {
@@ -34,14 +35,13 @@ func NewBook(cfg *Config) (Book, error) {
 	handler := func(event *binance.WsBookTickerEvent) {
 		defer func() {
 			if r := recover(); r != nil {
-				st.Done()
-				db.CloseDB()
+				log.Error(r)
+				st.Stop()
 			}
 		}()
 		func() {
 			t, err := ParseWsBookTickerEvent(event)
 			if err != nil {
-				log.Error(err)
 				panic(err)
 			}
 
@@ -49,13 +49,24 @@ func NewBook(cfg *Config) (Book, error) {
 
 			err = db.InsertTicker(bk.ticker)
 			if err != nil {
-				log.Error(err)
 				panic(err)
 			}
 
-			success := bk.FillOrder(bk.order, bk.ticker, bk.fills)
+			success, of := bk.FillOrder(bk.order, bk.ticker, bk.fills)
+			if of != nil {
+				err = db.InsertOrderFill(of)
+				if err != nil {
+					panic(err)
+				}
+				const l string = "order fill: id=%s size=%f price=%f ticker=%d timestamp=%s"
+				log.Infof(l, of.Id, of.Size, of.Price, of.Ticker.Id, of.CreatedAt)
+			}
 			if success == true {
-				st.Done()
+				err = db.FinalizeOrder(bk.order)
+				if err != nil {
+					panic(err)
+				}
+				st.Stop()
 			}
 		}()
 	}
@@ -128,17 +139,66 @@ func (b *book) CreateSellOrder(symbol string, size float64, price float64) (Orde
 	return *b.order, nil
 }
 
-func (b *book) FillOrder(order *Order, ticker *Ticker, fills []*OrderFill) bool {
+func (b *book) FillOrder(order *Order, ticker *Ticker, fills []*OrderFill) (bool, *OrderFill) {
+	var bestSize float64 = 0
+	var bestPrice float64 = 0
 	var sizeF float64 = 0
+	var priceF float64 = 0
+	var bestBidQty float64 = 0
 
 	for i := 0; i < len(fills); i++ {
+		if fills[i].Price > bestPrice {
+			bestPrice = fills[i].Price
+			bestSize = fills[i].Size
+		} else if fills[i].Price == bestPrice {
+			bestSize += fills[i].Size
+		}
+
 		sizeF += fills[i].Size
+		priceF += fills[i].Price
 	}
 
 	sizeR := order.Size - sizeF
 	if sizeR == 0 {
-		return true
+		return true, nil
 	}
 
-	return false
+	if ticker.BestBidPrice >= order.Price && (bestPrice <= ticker.BestBidPrice || len(fills) == 0) {
+		if len(fills) == 0 || bestPrice < ticker.BestBidPrice {
+			bestBidQty = ticker.BestBidQty
+		} else if bestPrice == ticker.BestBidPrice {
+			bestBidQty = ticker.BestBidQty - bestSize
+			if bestBidQty <= 0 {
+				return false, nil
+			}
+		}
+
+		if bestBidQty > 0 {
+			if sizeR <= bestBidQty {
+				of := &OrderFill{
+					Id:        uuid.NewString(),
+					Order:     order,
+					Ticker:    ticker,
+					CreatedAt: time.Now(),
+					Size:      sizeR,
+					Price:     ticker.BestBidPrice,
+				}
+				b.fills = append(fills, of)
+				return true, of
+			} else {
+				of := &OrderFill{
+					Id:        uuid.NewString(),
+					Order:     order,
+					Ticker:    ticker,
+					CreatedAt: time.Now(),
+					Size:      bestBidQty,
+					Price:     ticker.BestBidPrice,
+				}
+				b.fills = append(fills, of)
+				return false, of
+			}
+		}
+	}
+
+	return false, nil
 }

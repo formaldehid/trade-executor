@@ -7,8 +7,8 @@ import (
 )
 
 type stream struct {
-	doneC <-chan struct{}
-	stopC <-chan struct{}
+	doneC chan struct{}
+	stopC chan struct{}
 }
 
 type Stream interface {
@@ -35,7 +35,7 @@ func NewStream(cfg *Config, handler func(event *binance.WsBookTickerEvent)) (Str
 }
 
 func (s *stream) Stop() {
-	<-s.stopC
+	s.stopC <- struct{}{}
 }
 
 func (s *stream) Done() {

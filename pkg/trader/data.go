@@ -16,13 +16,11 @@ type Ticker struct {
 }
 
 type Order struct {
-	Id         string
-	Type       string
-	Symbol     string
-	Size       float64
-	Price      float64
-	IsFinished bool
-	FinalPrice float64
+	Id     string
+	Type   string
+	Symbol string
+	Size   float64
+	Price  float64
 }
 
 type OrderFill struct {

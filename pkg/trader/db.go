@@ -15,6 +15,7 @@ type DB interface {
 	InsertTicker(params *Ticker) error
 	InsertOrder(params *Order) error
 	InsertOrderFill(params *OrderFill) error
+	FinalizeOrder(o *Order) error
 }
 
 func NewDB(cfg *Config) (DB, error) {
@@ -52,13 +53,13 @@ func createTables(db *sql.DB) error {
 			symbol TEXT NOT NULL,
 			size REAL NOT NULL,
 			price REAL NOT NULL,
-			is_finished BOOLEAN DEFAULT false NOT NULL,
+			is_finalized BOOLEAN DEFAULT false NOT NULL,
 			final_price REAL DEFAULT 0 NOT NULL
 		);
 
 		CREATE TABLE IF NOT EXISTS order_fills (
 			id TEXT NOT NULL PRIMARY KEY,
-			order_id INTEGER NOT NULL,
+			order_id TEXT NOT NULL,
 			ticker_id INTEGER NOT NULL,
 			created_at TEXT NOT NULL,
 			size REAL NOT NULL,
@@ -97,9 +98,9 @@ func (db *db) InsertTicker(t *Ticker) error {
 }
 
 func (db *db) InsertOrder(o *Order) error {
-	const i string = "INSERT INTO orders VALUES(?,?,?,?,?,?,?);"
+	const i string = "INSERT INTO orders VALUES(?,?,?,?,?,false,0);"
 
-	_, err := db.DB.Exec(i, o.Id, o.Type, o.Symbol, o.Size, o.Price, o.IsFinished, o.FinalPrice)
+	_, err := db.DB.Exec(i, o.Id, o.Type, o.Symbol, o.Size, o.Price)
 	if err != nil {
 		return err
 	}
@@ -107,9 +108,24 @@ func (db *db) InsertOrder(o *Order) error {
 }
 
 func (db *db) InsertOrderFill(of *OrderFill) error {
-	const i string = "INSERT INTO order_fills VALUES(?,?,?,?,?,?,?,?);"
+	const i string = "INSERT INTO order_fills VALUES(?,?,?,?,?,?);"
 
 	_, err := db.DB.Exec(i, of.Id, of.Order.Id, of.Ticker.Id, of.CreatedAt, of.Size, of.Price)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (db *db) FinalizeOrder(o *Order) error {
+	const u string = `
+		UPDATE orders
+			SET is_finalized = true,
+			    final_price = (SELECT SUM(price) FROM order_fills WHERE order_id = ?)
+			WHERE id = ?
+	`
+
+	_, err := db.DB.Exec(u, o.Id, o.Id)
 	if err != nil {
 		return err
 	}
