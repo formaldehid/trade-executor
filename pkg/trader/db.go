@@ -16,6 +16,7 @@ type DB interface {
 	InsertOrder(params *Order) error
 	InsertOrderFill(params *OrderFill) error
 	FinalizeOrder(o *Order) error
+	GetFinalPrice(o *Order) (float64, error)
 }
 
 func NewDB(cfg *Config) (DB, error) {
@@ -130,4 +131,27 @@ func (db *db) FinalizeOrder(o *Order) error {
 		return err
 	}
 	return nil
+}
+
+func (db *db) GetFinalPrice(o *Order) (float64, error) {
+	rows, err := db.DB.Query("SELECT final_price from orders WHERE id = ?", o.Id)
+	if err != nil {
+		return 0, err
+	}
+
+	var finalPrice float64 = 0
+
+	for rows.Next() {
+		err = rows.Scan(&finalPrice)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	err = rows.Close()
+	if err != nil {
+		return 0, err
+	}
+
+	return finalPrice, nil
 }

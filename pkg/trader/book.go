@@ -66,6 +66,11 @@ func NewBook(cfg *Config) (Book, error) {
 				if err != nil {
 					panic(err)
 				}
+				fp, err := db.GetFinalPrice(bk.order)
+				if err != nil {
+					panic(err)
+				}
+				log.Infof("order finalized: id=%s numberFills=%d finalPrice=%f", bk.order.Id, len(bk.fills), fp)
 				st.Stop()
 			}
 		}()
